@@ -66,8 +66,11 @@ client in `src/mastra/index.ts`. See PLAN.md Phase 5.
 
 ## Tool naming
 
-Tool ids mirror the API path: `admin_users_list` = `GET /api/admin/users`,
-`admin_work-orders_transition` = `POST /api/admin/work-orders/{id}/transition`.
+Tool ids are grouped by the portal's service domains (mirroring `nipp-0111/services`):
+`user_list_admin` = `GET /api/admin/users`, `wo_transition_transition` =
+`POST /api/admin/work-orders/{id}/transition`, `calevent_organizations_calendar_events_list` =
+list a tenant's calendar events. Scope suffixes: `_admin` (/api/admin), `_dash`
+(/api/dashboard/admin), `_tenant` (/api/organizations/{orgId}).
 Every tool accepts an optional `orgId` argument to target a specific tenant
 (defaults to the Platform org from `.env`).
 

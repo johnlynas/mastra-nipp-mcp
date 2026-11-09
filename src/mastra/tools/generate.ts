@@ -2,15 +2,13 @@
  * Generates Mastra tools from the NIPP portal OpenAPI spec.
  *
  * Each (method, path) operation becomes one MCP tool:
- *   - id:      path segments (params dropped) + action suffix  → unique by construction
- *   - name:    same as id (MCP tool names)
+ *   - id:      grouped by the portal's service domains (mirrors nipp-0111/services):
+ *              `<domain>[_subpath]_<action>` — e.g. `user_list_admin` = GET /api/admin/users,
+ *              `wo_transition_transition` = POST /api/admin/work-orders/{id}/transition.
+ *              Colliding base ids (same operation in admin + dashboard scopes) get a
+ *              scope suffix: `_admin`, `_dash`, `_tenant`.
  *   - input:   zod object from path params + query params + request body schema
  *   - execute: forwards the call to the portal via PortalClient with the session cookie
- *
- * The portal's admin surface is grouped by domain in its service layer
- * (organization, user, role, team, work-order, contractor, invoice, quote,
- * resource, unit, permission, job-scheduler, calendar) — the tool ids mirror
- * that grouping via their path prefix.
  */
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
@@ -69,25 +67,128 @@ export function extractEndpoints(spec: OpenApiSpec, excludePrefixes: string[]): 
   return out;
 }
 
-/** Derive a stable, unique tool id from method + path. */
-export function deriveToolId(method: string, path: string): string {
-  const segs = path
-    .replace(/^\/api\//, '')
-    .split('/')
-    .filter((s) => s && !s.startsWith('{'));
-  const last = path.split('/').filter(Boolean).pop() ?? '';
-  const prev = path.split('/').filter(Boolean).slice(-2)[0] ?? '';
+// ---------------------------------------------------------------------------
+// Tool id derivation — grouped by the portal's service domains
+// (mirrors nipp-0111/services: organization, user, role, team, work-order,
+// contractor, invoice, quote, resource, unit, permission, job-scheduler,
+// calendar). Collisions between scopes (admin vs dashboard-admin vs tenant)
+// are resolved with a scope suffix.
+// ---------------------------------------------------------------------------
+
+/** Domain root path segment for each domain token (used to strip the prefix). */
+const DOMAIN_ROOTS: Record<string, string> = {
+  org: 'organizations',
+  user: 'users',
+  role: 'roles',
+  wo: 'work-orders',
+  wonote: 'work-order-notes',
+  contractor: 'contractors',
+  invoice: 'invoices',
+  quote: 'quotes',
+  calevent: 'calendar-events',
+  calnotif: 'calendar-notifications',
+  calendar: 'calendar',
+  perm: 'permissions',
+  resource: 'resources',
+  unit: 'units',
+  job: 'jobs',
+  script: 'scripts',
+};
+
+/** Map a spec path (without /api/) to a service-domain token. */
+export function deriveDomain(pathNoApi: string): string {
+  const s = pathNoApi;
+  if (s.includes('work-order-notes')) return 'wonote';
+  if (s.includes('work-orders') || s.includes('work-order')) return 'wo';
+  if (s.includes('contractors')) return 'contractor';
+  if (s.includes('invoices')) return 'invoice';
+  if (s.includes('quotes')) return 'quote';
+  if (s.includes('calendar-events')) return 'calevent';
+  if (s.includes('calendar-notifications')) return 'calnotif';
+  if (s.includes('/calendar')) return 'calendar';
+  if (s.includes('teams')) return 'team';
+  if (s.startsWith('admin/organizations') || s.startsWith('dashboard/admin/organizations')) return 'org';
+  if (s.startsWith('admin/users') || s.startsWith('dashboard/admin/users')) return 'user';
+  if (s.startsWith('admin/roles') || s.startsWith('dashboard/admin/roles') || s === 'roles' || s.startsWith('roles/')) return 'role';
+  if (s.includes('permissions/resources')) return 'resource';
+  if (s.includes('permissions')) return 'perm';
+  if (s.includes('/resources')) return 'resource';
+  if (s.includes('/units')) return 'unit';
+  if (s.startsWith('admin/jobs')) return 'job';
+  if (s.includes('/scripts')) return 'script';
+  if (s.includes('audit-logs') || s.includes('system-logs') || s.includes('metrics') || s.startsWith('cache/')) return 'system';
+  if (s.startsWith('security/')) return 'security';
+  if (s.startsWith('admin/notifications') || s === 'notifications/stream') return 'notif';
+  if (s.startsWith('dashboard/admin/stats') || s.startsWith('dashboard/admin/errors')) return 'system';
+  if (s.startsWith('organizations/')) return 'tenant_org';
+  return 'misc';
+}
+
+/** Path segments after the domain root, params dropped, dashes → underscores. */
+export function deriveSubpath(pathNoApi: string, domain: string): string[] {
+  let t = pathNoApi;
+  for (const pref of ['admin/', 'dashboard/admin/']) {
+    if (t.startsWith(pref)) t = t.slice(pref.length);
+  }
+  const root = DOMAIN_ROOTS[domain];
+  if (root) {
+    if (t === root) t = '';
+    else if (t.startsWith(root + '/')) t = t.slice(root.length + 1);
+  }
+  return t.split('/').filter((x) => x && !x.startsWith('{')).map((x) => x.replace(/-/g, '_'));
+}
+
+/** Action suffix from method + last path segments. */
+export function deriveAction(method: string, path: string): string {
+  const segs = path.split('/').filter(Boolean);
+  const last = segs[segs.length - 1] ?? '';
+  const prev = segs[segs.length - 2] ?? '';
   const lastIsParam = last.startsWith('{');
   const prevIsParam = prev.startsWith('{');
+  if (method === 'GET') return lastIsParam ? 'get' : 'list';
+  if (method === 'DELETE') return 'delete';
+  if (method === 'PATCH') return prevIsParam && !lastIsParam ? last.replace(/-/g, '_') : 'update';
+  if (method === 'POST') return prevIsParam && !lastIsParam ? last.replace(/-/g, '_') : 'create';
+  return method.toLowerCase();
+}
 
-  let action: string;
-  if (method === 'GET') action = lastIsParam ? 'get' : 'list';
-  else if (method === 'DELETE') action = 'delete';
-  else if (method === 'PATCH') action = prevIsParam && !lastIsParam ? last.replace(/-/g, '_') : 'update';
-  else if (method === 'POST') action = prevIsParam && !lastIsParam ? last.replace(/-/g, '_') : 'create';
-  else action = method.toLowerCase();
+/** Scope token used to disambiguate same-domain operations in different scopes. */
+export function deriveScope(path: string): string {
+  const s = path.replace(/^\/api\//, '');
+  if (s.startsWith('dashboard/admin/')) return 'dash';
+  if (s.startsWith('admin/')) return 'admin';
+  if (s.startsWith('organizations/')) return 'tenant';
+  return '';
+}
 
-  return [...segs, action].join('_');
+/** Base id: `<domain>[_subpath]_<action>` (no scope suffix). */
+export function deriveBaseToolId(method: string, path: string): string {
+  const s = path.replace(/^\/api\//, '');
+  const domain = deriveDomain(s);
+  return [domain, ...deriveSubpath(s, domain), deriveAction(method, path)].join('_');
+}
+
+/**
+ * Assign unique tool ids to all endpoints (two-pass):
+ * pass 1 groups by base id; pass 2 disambiguates collisions with the scope token.
+ */
+export function assignToolIds(endpoints: EndpointDef[]): Map<EndpointDef, string> {
+  const baseCount = new Map<string, number>();
+  for (const ep of endpoints) {
+    const bid = deriveBaseToolId(ep.method, ep.path);
+    baseCount.set(bid, (baseCount.get(bid) ?? 0) + 1);
+  }
+  const result = new Map<EndpointDef, string>();
+  for (const ep of endpoints) {
+    const bid = deriveBaseToolId(ep.method, ep.path);
+    if ((baseCount.get(bid) ?? 0) > 1) {
+      const scope = deriveScope(ep.path);
+      result.set(ep, scope ? `${bid}_${scope}` : bid);
+    } else {
+      result.set(ep, bid);
+    }
+  }
+  return result;
 }
 
 /** Build the input zod schema for an endpoint. */
@@ -158,10 +259,12 @@ function buildDescription(ep: EndpointDef): string {
 
 /** Generate one Mastra tool per endpoint. */
 export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePrefixes: string[]): Record<string, any> {
+  const endpoints = extractEndpoints(spec, excludePrefixes);
+  const ids = assignToolIds(endpoints);
   const tools: Record<string, any> = {};
-  for (const ep of extractEndpoints(spec, excludePrefixes)) {
-    const id = deriveToolId(ep.method, ep.path);
-    if (tools[id]) continue; // defensive — ids are unique by construction
+  for (const ep of endpoints) {
+    const id = ids.get(ep)!;
+    if (tools[id]) throw new Error(`Duplicate tool id: ${id}`);
 
     const inputSchema = buildInputSchema(ep, spec);
 
@@ -208,9 +311,8 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
   return tools;
 }
 
-/** Convenience: load spec + generate all portal tools. */
-export function buildPortalTools(config: PortalMcpConfig): Record<string, any> {
+/** Convenience: load spec + generate all portal tools with the given (shared) client. */
+export function buildPortalTools(config: PortalMcpConfig, client: PortalClient): Record<string, any> {
   const spec = loadSpec();
-  const client = new PortalClient(config);
   return generateTools(spec, client, config.excludePathPrefixes);
 }

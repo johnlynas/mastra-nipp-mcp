@@ -98,11 +98,15 @@ MCP clients (Mistra, Claude Desktop…)      NIPP portal :3000
 
 For every `(method, path)` operation in the spec (minus excluded prefixes):
 
-1. **id** = path segments with params dropped + action suffix:
-   `GET /api/admin/users` → `admin_users_list`;
-   `POST /api/admin/work-orders/{id}/transition` → `admin_work-orders_transition`.
-   Unique by construction (verified: 0 collisions across 175 endpoints). The id
-   doubles as the MCP tool name and mirrors the portal's service-domain grouping.
+1. **id** = service-domain token + subpath + action suffix, mirroring the
+   portal's `services/` layer: `GET /api/admin/users` → `user_list_admin`;
+   `POST /api/admin/work-orders/{id}/transition` → `wo_transition_transition`.
+   Domains: org, user, role, perm, team, wo, wonote, contractor, invoice, quote,
+   resource, unit, job, script, calendar/calevent/calnotif, system, security, notif.
+   When the same operation exists in multiple scopes (e.g. `/api/admin/users` and
+   `/api/dashboard/admin/users`), a scope suffix disambiguates: `_admin`, `_dash`,
+   `_tenant`. Two-pass assignment guarantees uniqueness (verified: 175/175). The id
+   doubles as the MCP tool name.
 2. **description** = `METHOD path — summary — first paragraph of the spec
    description` (kept ≤ ~500 chars so the model gets context without bloat).
 3. **input schema** (Zod, from the JSON Schema):
@@ -188,7 +192,7 @@ Credentials live in `.env` (gitignored); `.env.example` ships placeholders.
 | MCP `initialize` on `/api/mcp/nipp-portal/mcp` | 200, protocolVersion 2025-03-26, session id issued |
 | `tools/list` | **177 tools** (175 generated + 2 utility) |
 | `tools/call portal_session_verify` | success — user "System Administrator", org Platform, permissions `["*"]` |
-| `tools/call admin_organizations_list {page:1,pageSize:3}` | success — live data: Test Tenant Ltd + Platform orgs with member/team counts |
+| `tools/call org_list_admin {page:1,pageSize:3}` | success — live data: Test Tenant Ltd + Platform orgs with member/team counts |
 
 Reproduce with the smoke script pattern in §10 of `PLAN.md`.
 

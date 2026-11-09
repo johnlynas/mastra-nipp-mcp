@@ -30,7 +30,7 @@ export function getPortalClient(config: PortalMcpConfig): PortalClient {
 const config = loadConfig();
 const client = getPortalClient(config);
 
-const portalTools = buildPortalTools(config);
+const portalTools = buildPortalTools(config, client);
 
 export const portalMcpServer = new MCPServer({
   id: 'nipp-portal',
@@ -43,8 +43,13 @@ This server exposes the NIPP portal's admin API. The server acts as a Platform-o
 admin session; every call is forwarded to ${config.baseUrl} with that session.
 
 Conventions:
-- Tool ids mirror the API path: e.g. \`admin_users_list\` = GET /api/admin/users,
-  \`admin_work-orders_transition\` = POST /api/admin/work-orders/{id}/transition.
+- Tool ids are grouped by the portal's service domains: \`user_list_admin\` = GET /api/admin/users,
+  \`wo_transition_transition\` = POST /api/admin/work-orders/{id}/transition,
+  \`calevent_organizations_calendar_events_list\` = list a tenant's calendar events.
+- Domains: org, user, role, perm, team, wo (work orders), wonote, contractor, invoice, quote,
+  resource, unit, job (scheduler), script, calendar/calevent/calnotif, system, security, notif.
+- Scope suffixes mark where an operation lives: _admin (/api/admin), _dash (/api/dashboard/admin),
+  _tenant (/api/organizations/{orgId}). No suffix = single scope.
 - Most operations are scoped to an organization (tenant isolation). Pass \`orgId\` to target
   a specific tenant; when omitted the Platform org is used by default.
 - List endpoints support pagination via \`page\` and \`pageSize\` where documented.

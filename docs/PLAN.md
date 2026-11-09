@@ -129,14 +129,14 @@ curl -X POST http://localhost:4112/api/mcp/nipp-portal/mcp \
 ```
 
 ### Task 4.2: tools/list
-**Result:** 177 tools; spot-checked `admin_users_list`, `admin_organizations_create`,
+**Result:** 177 tools; spot-checked `user_list_admin`, `org_create_admin`,
 `portal_health`, `portal_session_verify` present.
 
 ### Task 4.3: Authenticated live calls (the real test)
 ```bash
 tools/call portal_session_verify {}
 # → user "System Administrator", org Platform, permissions ["*"]
-tools/call admin_organizations_list {"page":1,"pageSize":3}
+tools/call org_list_admin {"page":1,"pageSize":3}
 # → live data: Test Tenant Ltd + Platform, member/team counts, pagination
 ```
 
@@ -180,7 +180,7 @@ so Mistra asks before mutations/deletes.
 npx mastra api --url http://localhost:4111 --timeout 300000 agent run <agentId> \
   '{"messages":"List all organizations in the portal and report their names and member counts","memory":{"thread":"t1","resource":"r1"}}'
 ```
-Expected: agent calls `admin_organizations_list` via MCP and reports Test Tenant Ltd + Platform.
+Expected: agent calls `org_list_admin` via MCP and reports Test Tenant Ltd + Platform.
 
 **Exit criteria:** Mistra answers a real question using portal data through the MCP server.
 

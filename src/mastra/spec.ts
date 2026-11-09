@@ -1,7 +1,7 @@
 /**
  * Loads and caches the NIPP portal OpenAPI spec.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -15,12 +15,33 @@ export interface OpenApiSpec {
 
 let cached: OpenApiSpec | null = null;
 
+/**
+ * Find openapi/openapi.json by walking up from this module's directory.
+ * Works both from the source tree (<root>/src/mastra) and from Mastra's
+ * bundled output (<root>/.mastra/output/tools/*.mjs), regardless of cwd.
+ */
+function findSpecFile(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  let dir = here;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, 'openapi', 'openapi.json');
+    if (existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Last resort: cwd (dev server may run from the project root)
+  const cwdCandidate = path.resolve(process.cwd(), 'openapi/openapi.json');
+  if (existsSync(cwdCandidate)) return cwdCandidate;
+  throw new Error(
+    'Could not find openapi/openapi.json. Copy the portal spec to <project>/openapi/openapi.json ' +
+      '(from nipp-0111: npm run docs:generate → docs/openapi/generated/openapi.json).'
+  );
+}
+
 export function loadSpec(): OpenApiSpec {
   if (cached) return cached;
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  // openapi/openapi.json sits at project root; src/mastra is two levels up
-  const specPath = path.resolve(here, '../../openapi/openapi.json');
-  const raw = readFileSync(specPath, 'utf-8');
+  const raw = readFileSync(findSpecFile(), 'utf-8');
   cached = JSON.parse(raw) as OpenApiSpec;
   return cached;
 }

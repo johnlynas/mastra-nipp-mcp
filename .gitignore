@@ -1,10 +1,31 @@
+# Dependencies
 node_modules/
+
+# Environment variables — never commit secrets (portal credentials live here)
 .env
+.env.*
+!.env.example
+
+# Mastra runtime artifacts (dev server output, local state, storage)
 .mastra/
 src/mastra/public/
+
+# Local databases / storage files
 *.db
 *.db-shm
 *.db-wal
 *.duckdb
 *.duckdb.wal
+
+# Build output
 dist/
+build/
+
+# Logs & coverage
+*.log
+coverage/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
