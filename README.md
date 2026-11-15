@@ -8,9 +8,9 @@ Mistra agent → Portal MCP server → Portal API → Portal app
 ```
 
 175 tools generated from the portal's OpenAPI spec + 2 utility tools
-(`portal_health`, `portal_session_verify`). The server holds a BetterAuth
-cookie session (Platform org super-admin) and forwards every call with
-`x-org-id` tenant context.
+(`portal_health`, `portal_session_verify`). The server signs in once via
+BetterAuth and holds a bearer token (Platform org super-admin), sending it as
+`Authorization: Bearer *** on every call with `x-org-id` tenant context.
 
 Docs: [DESIGN.md](docs/DESIGN.md) · [PLAN.md](docs/PLAN.md)
 
@@ -63,6 +63,18 @@ export const portalMcp = new MCPClient({
 
 Then pass `await portalMcp.listTools()` to the agent's `tools` and register the
 client in `src/mastra/index.ts`. See PLAN.md Phase 5.
+
+## Authentication
+
+The portal runs BetterAuth's `bearer()` plugin, so the server authenticates
+with bearer tokens rather than session cookies (the cookie path breaks in
+production: `__Secure-` cookies are minted over plain HTTP). On sign-in the
+client captures the token from the `set-auth-token` response header (falling
+back to `{token}` in the JSON body) and attaches it to every request as
+`Authorization: Bearer *** A 401 triggers a transparent re-auth retry.
+Portal auth gates (ban, super-admin, org isolation) apply unchanged via the
+plugin's per-request header rewrite — no cookies are involved, so dev and
+production behave identically.
 
 ## Tool naming
 
