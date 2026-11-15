@@ -1,11 +1,19 @@
 /**
- * HTTP client for the NIPP portal API with BetterAuth session management.
+ * HTTP client for the NIPP portal API with BetterAuth bearer-token auth.
  *
- * The portal's admin/dashboard routes require a cookie session
- * (better-auth.session_token). Bearer tokens are NOT accepted by those
- * routes — verified against the live portal. So this client:
- *   1. signs in via POST /api/auth/sign-in/email to obtain the session cookie
- *   2. sends it as a Cookie header on every request
+ * The portal runs BetterAuth's `bearer()` plugin (nipp-0111 lib/auth.ts): a
+ * server-to-server client signs in once and receives its session token as the
+ * `set-auth-token` response header (and `{token}` in the JSON body). Every
+ * subsequent request carries `Authorization: Bearer <token>` — no cookies, so
+ * this works identically in dev and production (production mints
+ * `__Secure-` prefixed cookies over plain HTTP, which is exactly what broke
+ * the old cookie-based client). The plugin rewrites the header to an internal
+ * session per request, so all portal auth gates (ban, super-admin, org
+ * isolation) apply unchanged.
+ *
+ * This client:
+ *   1. signs in via POST /api/auth/sign-in/email and captures the bearer token
+ *   2. sends it as Authorization: Bearer on every request
  *   3. re-authenticates transparently on 401 and retries once
  */
 import type { PortalMcpConfig } from './config.js';
@@ -31,14 +39,14 @@ export interface PortalResponse {
 const MAX_BODY_CHARS = 100_000;
 
 export class PortalClient {
-  private cookie = '';
+  private token = '';
   private signingIn: Promise<void> | null = null;
   /** Last sign-in attempt timestamp — cooldown guard against the portal's sign-in rate limit. */
   private lastSignInAt = 0;
 
   constructor(private config: PortalMcpConfig) {}
 
-  /** Sign in and capture the BetterAuth session cookie. */
+  /** Sign in and capture the BetterAuth bearer token (set-auth-token header / {token} body). */
   async signIn(): Promise<void> {
     if (!this.config.email || !this.config.password) {
       throw new Error(
@@ -74,17 +82,25 @@ export class PortalClient {
       throw new Error(`Portal sign-in failed (${res.status}): ${text.slice(0, 300)}`);
     }
 
-    // Node 18+: getSetCookie() returns the raw Set-Cookie header values.
-    const setCookies: string[] = res.headers.getSetCookie?.() ?? [];
-    const sessionToken = setCookies.find((c) => c.startsWith('better-auth.session_token='));
-    if (!sessionToken) {
-      throw new Error('Portal sign-in succeeded but no session cookie was returned');
+    // The bearer() plugin emits the session token in-band: `set-auth-token`
+    // response header (primary) and `{token}` in the JSON body (fallback).
+    let body: { token?: string } | null = null;
+    try {
+      body = JSON.parse(await res.text());
+    } catch {
+      body = null;
     }
-    this.cookie = sessionToken.split(';')[0]; // name=value only
+    const token = res.headers.get('set-auth-token') || body?.token;
+    if (!token) {
+      throw new Error(
+        'Portal sign-in succeeded but no bearer token was returned (expected set-auth-token header)'
+      );
+    }
+    this.token = token;
   }
 
   private async ensureSession(): Promise<void> {
-    if (this.cookie) return;
+    if (this.token) return;
     if (!this.signingIn) {
       this.signingIn = this.signIn().finally(() => {
         this.signingIn = null;
@@ -95,14 +111,14 @@ export class PortalClient {
 
   /** Invalidate the session (called on 401). */
   invalidateSession(): void {
-    this.cookie = '';
+    this.token = '';
   }
 
   async request(method: string, path: string, opts: PortalRequestOptions = {}): Promise<PortalResponse> {
     await this.ensureSession();
     const result = await this.doRequest(method, path, opts);
     // Transparent re-auth on 401 (expired session) — retry once.
-    if (result.status === 401 && this.cookie) {
+    if (result.status === 401 && this.token) {
       this.invalidateSession();
       await this.ensureSession();
       return this.doRequest(method, path, opts);
@@ -130,9 +146,8 @@ export class PortalClient {
     const fullUrl = `${this.config.baseUrl}${url}${qsStr ? `?${qsStr}` : ''}`;
 
     const headers: Record<string, string> = {
-      Cookie: this.cookie,
+      Authorization: `Bearer ${this.token}`,
       Accept: 'application/json',
-      Origin: this.config.baseUrl, // BetterAuth CSRF check requires a non-null origin
     };
     const orgId = opts.orgId ?? this.config.defaultOrgId;
     if (orgId) headers['x-org-id'] = orgId;

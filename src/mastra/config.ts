@@ -6,7 +6,7 @@
 export interface PortalMcpConfig {
   /** Base URL of the NIPP portal, no trailing slash. */
   baseUrl: string;
-  /** BetterAuth credentials used to obtain a session cookie. */
+  /** BetterAuth credentials used to obtain a bearer token on sign-in. */
   email: string;
   password: string;
   /** Org id sent as x-org-id by default (Platform org for admin functions). */

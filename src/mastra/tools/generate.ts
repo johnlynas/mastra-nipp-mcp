@@ -8,7 +8,7 @@
  *              Colliding base ids (same operation in admin + dashboard scopes) get a
  *              scope suffix: `_admin`, `_dash`, `_tenant`.
  *   - input:   zod object from path params + query params + request body schema
- *   - execute: forwards the call to the portal via PortalClient with the session cookie
+ *   - execute: forwards the call to the portal via PortalClient with the bearer token
  */
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
