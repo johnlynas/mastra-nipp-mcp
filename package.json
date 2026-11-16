@@ -19,15 +19,19 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
-    "@mastra/core": "1.82.0",
-    "@mastra/libsql": "1.29.0",
-    "@mastra/mcp": "^1.15.0",
+    "@mastra/core": "1.83.0",
+    "@mastra/libsql": "1.30.0",
+    "@mastra/mcp": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
-    "mastra": "1.38.0",
+    "mastra": "1.39.0",
     "tsx": "^4.20.0",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.1.8",
+    "minimatch": "^11.0.8"
   }
 }
