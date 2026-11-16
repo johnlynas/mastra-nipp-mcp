@@ -6,10 +6,8 @@
  * checks. No authentication — polled by the APM, which alerts on red and can
  * restart the server; amber is a warning only.
  *
- * Dependency semantics (mirrors how the portal treats its PgBouncer pooler —
- * nice to have, the service keeps working without it):
+ * Dependency semantics:
  *   - storage: the MCP server's own LibSQL store → degraded when down
- *   - portal:  the NIPP portal's public /api/health endpoint → degraded when down
  *
  * A dead process is the only red state — the APM sees it as an unreachable
  * endpoint, not a JSON status. So this route answers 200 for healthy/degraded
@@ -31,8 +29,6 @@ export interface HealthResponse {
   checks: Record<string, CheckResult>;
 }
 
-const PORTAL_HEALTH_TIMEOUT_MS = 5_000;
-
 /** Probe the MCP server's LibSQL store with a trivial list query. */
 async function checkStorage(mastra: Mastra): Promise<CheckResult> {
   const start = Date.now();
@@ -51,49 +47,15 @@ async function checkStorage(mastra: Mastra): Promise<CheckResult> {
   }
 }
 
-/** Probe the portal's own public health endpoint (no auth required). */
-async function checkPortal(baseUrl: string): Promise<CheckResult> {
-  if (!baseUrl) {
-    return { status: 'skipped', message: 'Portal not configured' };
-  }
-  const start = Date.now();
-  try {
-    const res = await fetch(`${baseUrl}/api/health`, {
-      signal: AbortSignal.timeout(PORTAL_HEALTH_TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      let detail: unknown;
-      try {
-        const body = (await res.json()) as { status?: string };
-        detail = body.status ?? res.status;
-      } catch {
-        detail = res.status;
-      }
-      return {
-        status: 'unhealthy',
-        latency_ms: Date.now() - start,
-        error: `Portal reported unhealthy (status ${detail})`,
-      };
-    }
-    return { status: 'healthy', latency_ms: Date.now() - start };
-  } catch (error) {
-    return {
-      status: 'unhealthy',
-      error: `Portal unreachable (${error instanceof Error ? error.message : String(error)})`,
-    };
-  }
-}
-
 /** Run all health checks — returns current state only, no side effects. */
-export async function checkHealthStatus(mastra: Mastra, baseUrl: string): Promise<HealthResponse> {
-  const [storage, portal] = await Promise.all([checkStorage(mastra), checkPortal(baseUrl)]);
+export async function checkHealthStatus(mastra: Mastra): Promise<HealthResponse> {
+  const storage = await checkStorage(mastra);
 
-  // Both dependencies are non-critical (amber) — the MCP server process is up
-  // and answering probes even if they fail. A dead process never reaches this code.
-  const status: HealthResponse['status'] =
-    storage.status === 'unhealthy' || portal.status === 'unhealthy' ? 'degraded' : 'healthy';
+  // The dependency is non-critical (amber) — the MCP server process is up and
+  // answering probes even if it fails. A dead process never reaches this code.
+  const status: HealthResponse['status'] = storage.status === 'unhealthy' ? 'degraded' : 'healthy';
 
-  const checks: Record<string, CheckResult> = { storage, portal };
+  const checks: Record<string, CheckResult> = { storage };
   if (status !== 'healthy') {
     console.warn(`[HEALTH] ${status}: ${JSON.stringify(checks)}`);
   }
@@ -107,14 +69,14 @@ export async function checkHealthStatus(mastra: Mastra, baseUrl: string): Promis
 }
 
 /** Hono route object — spread into Mastra's `server.apiRoutes`. */
-export function healthRoute(baseUrl: string) {
+export function healthRoute() {
   return {
     path: '/mcp-health',
     method: 'GET' as const,
     requiresAuth: false,
     createHandler: async ({ mastra }: { mastra: Mastra }) => {
       return async () => {
-        const health = await checkHealthStatus(mastra, baseUrl);
+        const health = await checkHealthStatus(mastra);
         return new Response(JSON.stringify(health), {
           status: health.status === 'unhealthy' ? 503 : 200,
           headers: { 'Content-Type': 'application/json' },
