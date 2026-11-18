@@ -231,6 +231,16 @@ function buildInputSchema(ep: EndpointDef, spec: OpenApiSpec): z.ZodObject<any> 
         ? bodyZod.describe(ep.bodySchema.description).optional()
         : bodyZod.optional();
     }
+  } else if (ep.method === 'POST' || ep.method === 'PATCH' || ep.method === 'PUT') {
+    // The portal route parses a JSON body even when the OpenAPI spec doesn't
+    // document one (e.g. POST /api/dashboard/admin/contractors, units). Without
+    // this pass-through the tool would send no body at all and the portal
+    // rejects it with 400 "Invalid JSON body". Accept a raw object; the client
+    // serializes it as application/json.
+    shape.rawBody = z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('JSON request body (object). Required for this endpoint — the OpenAPI spec does not document its fields.');
   }
 
   // Organization context override
