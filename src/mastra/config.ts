@@ -33,6 +33,7 @@ export function loadConfig(): PortalMcpConfig {
       '/api/auth', // BetterAuth catch-all — handled by the session manager, not a tool
       '/api/csp-report', // browser CSP reporting endpoint
       '/api/health', // liveness probe; exposed as its own dedicated tool
+      '/api/notifications/stream', // SSE long-lived stream — fetch() would block; not a REST call
     ],
   };
 }
