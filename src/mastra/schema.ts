@@ -55,11 +55,6 @@ export function schemaToZod(schema: any, spec: OpenApiSpec, depth = 0): z.ZodTyp
       }
   }
 
-  // apply default
-  if (schema.default !== undefined) {
-    base = base.default(schema.default);
-  }
-
   // nullable
   if (schema.nullable) {
     base = base.nullable();
@@ -86,6 +81,12 @@ function objectToZod(schema: any, spec: OpenApiSpec, depth: number): z.ZodTypeAn
     }
     if (!required.includes(key)) {
       field = field.optional();
+      // A documented default only makes sense on optional fields — applying
+      // .default() to a required field would make the input optional in zod,
+      // silently violating the spec (e.g. DashboardCreateRoleBody.isDefault).
+      if (val?.default !== undefined) {
+        field = field.default(val.default);
+      }
     }
     shape[key] = field;
   }
