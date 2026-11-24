@@ -162,6 +162,19 @@ export function deriveScope(path: string): string {
   return '';
 }
 
+/**
+ * Scope class for gating (phase 2): the four classes a tool endpoint falls into.
+ * Thin wrapper over `deriveScope` with an explicit union type — used by the
+ * call-time scope gate and the per-caller tools/list filter.
+ */
+export function classifyTool(path: string): 'admin' | 'dash' | 'tenant' | 'single' {
+  const s = path.replace(/^\/api\//, '');
+  if (s.startsWith('dashboard/admin/')) return 'dash';
+  if (s.startsWith('admin/')) return 'admin';
+  if (s.startsWith('organizations/')) return 'tenant';
+  return 'single';
+}
+
 /** Base id: `<domain>[_subpath]_<action>` (no scope suffix). */
 export function deriveBaseToolId(method: string, path: string): string {
   const s = path.replace(/^\/api\//, '');
