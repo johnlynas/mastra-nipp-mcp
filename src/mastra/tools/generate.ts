@@ -17,6 +17,7 @@ import { loadSpec } from '../spec.js';
 import { schemaToZod } from '../schema.js';
 import { PortalClient } from '../client.js';
 import type { PortalMcpConfig } from '../config.js';
+import { resolveCallerToken } from './caller.js';
 
 interface EndpointDef {
   method: string; // GET, POST, ...
@@ -272,6 +273,9 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
   const endpoints = extractEndpoints(spec, excludePrefixes);
   const ids = assignToolIds(endpoints);
   const tools: Record<string, any> = {};
+  // Warn once per process when tool calls run without a caller token (legacy
+  // service-account fallback). Per-call warnings would spam a busy chat turn.
+  let warnedNoCaller = false;
   for (const ep of endpoints) {
     const id = ids.get(ep)!;
     if (tools[id]) throw new Error(`Duplicate tool id: ${id}`);
@@ -282,7 +286,16 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
       id,
       description: buildDescription(ep),
       inputSchema,
-      execute: async (input: any) => {
+      execute: async (input: any, context?: any) => {
+        // Phase 1: resolve the calling user's verified portal session token.
+        // null → legacy service-account fallback (kept for non-agent clients;
+        // removed in phase 3). The token is never logged.
+        const bearerToken = await resolveCallerToken(context);
+        if (!bearerToken && !warnedNoCaller) {
+          warnedNoCaller = true;
+          console.warn(`[mcp-authz] tool ${id} ran without a caller token — using legacy service session`);
+        }
+
         const pathParams: Record<string, string> = {};
         const query: Record<string, unknown> = {};
         const bodyFields: Record<string, unknown> = {};
@@ -305,6 +318,7 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
           query: query as any,
           body: hasBody ? (input.body !== undefined ? input.body : bodyFields) : undefined,
           orgId: input.orgId,
+          bearerToken: bearerToken ?? undefined,
         });
 
         if (!res.ok) {

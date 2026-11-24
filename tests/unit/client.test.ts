@@ -16,12 +16,11 @@ afterEach(() => {
 
 describe('PortalClient per-request token', () => {
   it('forwards the caller token as Authorization and never signs in', async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(JSON.stringify({ success: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) =>
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
     );
     vi.stubGlobal('fetch', fetchMock);
     const c = new PortalClient(cfg as any);
@@ -31,8 +30,9 @@ describe('PortalClient per-request token', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1); // no sign-in call
     const [, init] = fetchMock.mock.calls[0];
-    expect((init.headers as any).Authorization).toBe('Bearer tok-user-123');
-    expect((init.headers as any)['x-org-id']).toBe('org_t1');
+    const headers = (init as unknown as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer tok-user-123');
+    expect(headers['x-org-id']).toBe('org_t1');
   });
 
   it('falls back to service sign-in when no token and fallback allowed', async () => {
