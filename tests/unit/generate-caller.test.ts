@@ -64,17 +64,14 @@ describe('generated tools forward the verified caller token (phase 1)', () => {
     );
   });
 
-  it('falls back (no token) when the caller token fails verification', async () => {
+  it('fail-closed (phase 2): token present but failing verification → 403, no portal call', async () => {
     const request = vi.fn(async () => ({ status: 200, ok: true, data: {} }));
     __setVerifyCallerForTests(async () => null); // invalid token
     const tools = generateTools(miniSpec, { request } as any, ['/api/auth']);
 
-    await tools[TOOL_ID].execute({ page: 1 }, { requestContext: new FakeRC().set('authInfo', { token: 'tok-bad' }) });
-    expect(request).toHaveBeenCalledWith(
-      'GET',
-      '/api/admin/users',
-      expect.objectContaining({ bearerToken: undefined })
-    );
+    const out = await tools[TOOL_ID].execute({ page: 1 }, { requestContext: new FakeRC().set('authInfo', { token: 'tok-bad' }) });
+    expect(out).toMatchObject({ success: false, status: 403 });
+    expect(request).not.toHaveBeenCalled(); // must not ride the service account
   });
 
   it('reads the explicit mastra__mcpToken key as a fallback source', async () => {

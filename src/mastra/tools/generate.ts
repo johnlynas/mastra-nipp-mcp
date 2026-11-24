@@ -17,7 +17,7 @@ import { loadSpec } from '../spec.js';
 import { schemaToZod } from '../schema.js';
 import { PortalClient } from '../client.js';
 import type { PortalMcpConfig } from '../config.js';
-import { resolveCallerToken } from './caller.js';
+import { resolveCaller } from './caller.js';
 
 interface EndpointDef {
   method: string; // GET, POST, ...
@@ -282,7 +282,14 @@ function buildDescription(ep: EndpointDef): string {
 }
 
 /** Generate one Mastra tool per endpoint. */
-export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePrefixes: string[]): Record<string, any> {
+export function generateTools(
+  spec: OpenApiSpec,
+  client: PortalClient,
+  excludePrefixes: string[],
+  /** Phase 2 scope gate; defaults to the MCP_ENFORCE_SCOPE_GATE env (on). */
+  enforceScopeGate?: boolean,
+): Record<string, any> {
+  const gateOn = enforceScopeGate ?? process.env.MCP_ENFORCE_SCOPE_GATE !== '0';
   const endpoints = extractEndpoints(spec, excludePrefixes);
   const ids = assignToolIds(endpoints);
   const tools: Record<string, any> = {};
@@ -300,13 +307,32 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
       description: buildDescription(ep),
       inputSchema,
       execute: async (input: any, context?: any) => {
-        // Phase 1: resolve the calling user's verified portal session token.
-        // null → legacy service-account fallback (kept for non-agent clients;
-        // removed in phase 3). The token is never logged.
-        const bearerToken = await resolveCallerToken(context);
-        if (!bearerToken && !warnedNoCaller) {
+        // Phase 1/2: resolve the calling user's verified portal session.
+        // token null + verifyFailed false → legacy service-account fallback
+        // (kept for non-agent clients; removed in phase 3). The token is never
+        // logged.
+        const resolved = await resolveCaller(context);
+        if (!resolved.token && !resolved.verifyFailed && !warnedNoCaller) {
           warnedNoCaller = true;
           console.warn(`[mcp-authz] tool ${id} ran without a caller token — using legacy service session`);
+        }
+
+        // Phase 2: the server-side admin scope gate — THE security boundary.
+        // Admin-scoped endpoints (/api/admin/*) are reachable only by platform
+        // admins, enforced here BEFORE any portal round-trip (model-independent).
+        // - verified non-admin caller → 403, never reaches the portal
+        // - token present but unverifiable → 403 (fail closed — a broken
+        //   verification must NOT degrade to the service account)
+        // - no token at all → legacy service-account fallback until phase 3
+        // _dash tools are intentionally NOT gated: the portal's requirePermission
+        // enforces org-admin rights per target org and returns its own 403.
+        if (gateOn && classifyTool(ep.path) === 'admin') {
+          if (resolved.verifyFailed) {
+            return { success: false, status: 403, error: `Tool '${id}' requires a platform admin; the caller token could not be verified.` };
+          }
+          if (resolved.token !== null && !resolved.caller?.isPlatformAdmin) {
+            return { success: false, status: 403, error: `Tool '${id}' requires a platform admin. Caller is not authorized.` };
+          }
         }
 
         const pathParams: Record<string, string> = {};
@@ -331,7 +357,7 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
           query: query as any,
           body: hasBody ? (input.body !== undefined ? input.body : bodyFields) : undefined,
           orgId: input.orgId,
-          bearerToken: bearerToken ?? undefined,
+          bearerToken: resolved.token ?? undefined,
         });
 
         if (!res.ok) {
@@ -351,5 +377,5 @@ export function generateTools(spec: OpenApiSpec, client: PortalClient, excludePr
 /** Convenience: load spec + generate all portal tools with the given (shared) client. */
 export function buildPortalTools(config: PortalMcpConfig, client: PortalClient): Record<string, any> {
   const spec = loadSpec();
-  return generateTools(spec, client, config.excludePathPrefixes);
+  return generateTools(spec, client, config.excludePathPrefixes, config.enforceScopeGate);
 }

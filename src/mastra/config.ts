@@ -24,6 +24,14 @@ export interface PortalMcpConfig {
    * platform admin (mirrors portal `verifySuperAdmin`). Env `PLATFORM_ORG_ID`.
    */
   platformOrgId: string;
+  /**
+   * Phase 2: enforce the server-side admin scope gate. When on, admin-scoped
+   * tools (`/api/admin/*`) return 403 for verified callers who are not
+   * platform admins — before any portal round-trip. Legacy token-less calls
+   * keep the service-account fallback until phase 3. Env `MCP_ENFORCE_SCOPE_GATE`,
+   * default on; `0` degrades to phase 1 behavior (portal RBAC decides).
+   */
+  enforceScopeGate: boolean;
 }
 
 function env(name: string, fallback = ''): string {
@@ -48,6 +56,7 @@ export function loadConfig(): PortalMcpConfig {
     defaultOrgId: env('PORTAL_DEFAULT_ORG_ID'),
     allowServiceFallback: env('MCP_ALLOW_SERVICE_FALLBACK', '1') !== '0',
     platformOrgId: bareId(env('PLATFORM_ORG_ID')),
+    enforceScopeGate: env('MCP_ENFORCE_SCOPE_GATE', '1') !== '0',
     // Public / non-admin surface is intentionally not exposed as tools:
     // the MCP server is for controlling the portal's admin (Platform org) API.
     excludePathPrefixes: [
