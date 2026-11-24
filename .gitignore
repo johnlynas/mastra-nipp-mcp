@@ -21,6 +21,9 @@ src/mastra/public/
 dist/
 build/
 
+# Prisma (generated client — schema.prisma is committed, generated/ is not)
+prisma/generated/
+
 # Logs & coverage
 *.log
 coverage/

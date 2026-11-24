@@ -5,4 +5,9 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     environment: 'node',
   },
+  resolve: {
+    alias: {
+      '@prisma-gen': new URL('./prisma/generated/prisma', import.meta.url).pathname,
+    },
+  },
 });

@@ -11,7 +11,10 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": false,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@prisma-gen/*": ["./prisma/generated/prisma/*.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "prisma/generated/**/*.ts", "vitest.config.ts"]
 }
