@@ -9,7 +9,8 @@
     "build": "mastra build",
     "start": "mastra start",
     "stdio": "tsx src/mastra/mcp/stdio.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
@@ -28,7 +29,8 @@
     "@types/node": "^26.6.6",
     "mastra": "1.39.0",
     "tsx": "^4.20.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.7"
   },
   "overrides": {
     "@hono/node-server": "^2.1.8",
