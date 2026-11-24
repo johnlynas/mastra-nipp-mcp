@@ -27,6 +27,12 @@ export interface PortalRequestOptions {
   body?: unknown;
   /** Organization context → x-org-id header (tenant isolation). */
   orgId?: string;
+  /**
+   * Caller's portal session token — forwarded verbatim as `Authorization:
+   * Bearer <token>`. When present the service-account session is NOT used and
+   * no re-auth retry happens (a 401/403 here means the *caller* was rejected).
+   */
+  bearerToken?: string;
 }
 
 export interface PortalResponse {
@@ -115,6 +121,20 @@ export class PortalClient {
   }
 
   async request(method: string, path: string, opts: PortalRequestOptions = {}): Promise<PortalResponse> {
+    // Caller-token path (phase 1): forward the calling user's portal session
+    // verbatim. No service sign-in, no re-auth retry — a 401/403 here means the
+    // CALLER was rejected by portal RBAC, and re-signing the service account
+    // would silently escalate (exactly the bug this phase removes).
+    if (opts.bearerToken) {
+      return this.doRequest(method, path, opts);
+    }
+    // Legacy path: shared Platform super-admin session. Kept for existing
+    // non-agent MCP clients (Studio, scripts) during rollout; removed in phase 3.
+    if (process.env.MCP_ALLOW_SERVICE_FALLBACK === '0') {
+      throw new Error(
+        'No caller token provided and service-account fallback is disabled (MCP_ALLOW_SERVICE_FALLBACK=0).'
+      );
+    }
     await this.ensureSession();
     const result = await this.doRequest(method, path, opts);
     // Transparent re-auth on 401 (expired session) — retry once.
@@ -146,7 +166,7 @@ export class PortalClient {
     const fullUrl = `${this.config.baseUrl}${url}${qsStr ? `?${qsStr}` : ''}`;
 
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
+      Authorization: `Bearer ${opts.bearerToken ?? this.token}`,
       Accept: 'application/json',
     };
     const orgId = opts.orgId ?? this.config.defaultOrgId;
