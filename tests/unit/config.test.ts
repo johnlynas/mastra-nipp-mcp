@@ -14,8 +14,8 @@ describe('loadConfig', () => {
   });
 
   describe('phase 1 authz flags', () => {
-    it('allows the service-account fallback by default', () => {
-      expect(loadConfig().allowServiceFallback).toBe(true);
+    it('rejects the service-account fallback by default (phase 3)', () => {
+      expect(loadConfig().allowServiceFallback).toBe(false);
     });
 
     it('disables the fallback on MCP_ALLOW_SERVICE_FALLBACK=0', () => {
@@ -23,7 +23,7 @@ describe('loadConfig', () => {
       expect(loadConfig().allowServiceFallback).toBe(false);
     });
 
-    it('keeps the fallback enabled on MCP_ALLOW_SERVICE_FALLBACK=1', () => {
+    it('enables the fallback only on explicit MCP_ALLOW_SERVICE_FALLBACK=1', () => {
       process.env.MCP_ALLOW_SERVICE_FALLBACK = '1';
       expect(loadConfig().allowServiceFallback).toBe(true);
     });

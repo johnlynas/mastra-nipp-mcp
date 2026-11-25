@@ -15,8 +15,9 @@ export interface PortalMcpConfig {
   excludePathPrefixes: string[];
   /**
    * Phase 1: allow the legacy service-account session when a tool call has no
-   * caller token (existing non-agent MCP clients). Env `MCP_ALLOW_SERVICE_FALLBACK`,
-   * default on. Phase 3 flips the default and removes the path.
+   * caller token (existing non-agent MCP clients). Env `MCP_ALLOW_SERVICE_FALLBACK`.
+   * Phase 3: default OFF — unauthenticated calls are rejected with 401 and the
+   * super-admin session is only reachable when explicitly set to `1`.
    */
   allowServiceFallback: boolean;
   /**
@@ -54,7 +55,7 @@ export function loadConfig(): PortalMcpConfig {
     email: env('PORTAL_EMAIL'),
     password: env('PORTAL_PASSWORD'),
     defaultOrgId: env('PORTAL_DEFAULT_ORG_ID'),
-    allowServiceFallback: env('MCP_ALLOW_SERVICE_FALLBACK', '1') !== '0',
+    allowServiceFallback: env('MCP_ALLOW_SERVICE_FALLBACK', '0') === '1',
     platformOrgId: bareId(env('PLATFORM_ORG_ID')),
     enforceScopeGate: env('MCP_ENFORCE_SCOPE_GATE', '1') !== '0',
     // Public / non-admin surface is intentionally not exposed as tools:

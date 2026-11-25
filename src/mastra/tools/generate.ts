@@ -19,6 +19,7 @@ import { PortalClient } from '../client.js';
 import type { PortalMcpConfig } from '../config.js';
 import { resolveCaller } from './caller.js';
 import { registerToolScope } from './filter.js';
+import { logToolCall } from '../audit.js';
 
 interface EndpointDef {
   method: string; // GET, POST, ...
@@ -293,8 +294,12 @@ export function generateTools(
   excludePrefixes: string[],
   /** Phase 2 scope gate; defaults to the MCP_ENFORCE_SCOPE_GATE env (on). */
   enforceScopeGate?: boolean,
+  /** Phase 3: service-account fallback for token-less calls; defaults to the MCP_ALLOW_SERVICE_FALLBACK env. */
+  allowServiceFallback?: boolean,
 ): Record<string, any> {
   const gateOn = enforceScopeGate ?? process.env.MCP_ENFORCE_SCOPE_GATE !== '0';
+  // Phase 3: service fallback is OFF by default — only an explicit `1` enables it.
+  const fallbackAllowed = allowServiceFallback ?? process.env.MCP_ALLOW_SERVICE_FALLBACK === '1';
   const endpoints = extractEndpoints(spec, excludePrefixes);
   const ids = assignToolIds(endpoints);
   const tools: Record<string, any> = {};
@@ -314,67 +319,123 @@ export function generateTools(
       description: buildDescription(ep),
       inputSchema,
       execute: async (input: any, context?: any) => {
-        // Phase 1/2: resolve the calling user's verified portal session.
-        // token null + verifyFailed false → legacy service-account fallback
-        // (kept for non-agent clients; removed in phase 3). The token is never
-        // logged.
+        // Phase 3: every call is audited — success, portal rejection, gate
+        // rejection (403), and unauthenticated (401). The audit line carries
+        // the verified user id (or 'legacy-service'), never the token.
+        const scope = classifyTool(ep.path);
+        const startedAt = Date.now();
+
+        // Phase 1/2: resolve the calling user's verified portal session ONCE
+        // (cached ≤60s in verifyCaller). The token is never logged.
         const resolved = await resolveCaller(context);
         if (!resolved.token && !resolved.verifyFailed && !warnedNoCaller) {
           warnedNoCaller = true;
           console.warn(`[mcp-authz] tool ${id} ran without a caller token — using legacy service session`);
         }
 
-        // Phase 2: the server-side admin scope gate — THE security boundary.
-        // Admin-scoped endpoints (/api/admin/*) are reachable only by platform
-        // admins, enforced here BEFORE any portal round-trip (model-independent).
-        // - verified non-admin caller → 403, never reaches the portal
-        // - token present but unverifiable → 403 (fail closed — a broken
-        //   verification must NOT degrade to the service account)
-        // - no token at all → legacy service-account fallback until phase 3
-        // _dash tools are intentionally NOT gated: the portal's requirePermission
-        // enforces org-admin rights per target org and returns its own 403.
-        if (gateOn && classifyTool(ep.path) === 'admin') {
-          if (resolved.verifyFailed) {
-            return { success: false, status: 403, error: `Tool '${id}' requires a platform admin; the caller token could not be verified.` };
+        // Audit identity: verified user id; 'legacy-service' ONLY when the call
+        // actually ran on the opt-in service-account fallback; 'unverified' for
+        // token-bearing requests that failed verification.
+        let auditUserId = resolved.caller?.userId ?? (resolved.token === null && !resolved.verifyFailed ? 'legacy-service' : 'unverified');
+
+        let result: any;
+        try {
+          // Phase 3: unauthenticated calls are rejected by default. The
+          // service-account fallback (super-admin session) runs ONLY when the
+          // operator explicitly opts in via MCP_ALLOW_SERVICE_FALLBACK=1.
+          // A token that FAILED verification is never treated as "no token" —
+          // fail closed (403 on admin tools below, 401 elsewhere).
+          if (!resolved.token && !resolved.verifyFailed && !fallbackAllowed) {
+            auditUserId = 'unverified'; // no token, no fallback — nothing to attribute to
+            result = {
+              success: false,
+              status: 401,
+              error:
+                'No caller token provided and service-account fallback is disabled (MCP_ALLOW_SERVICE_FALLBACK defaults to 0). ' +
+                'Authenticate the MCP client with a portal session token.',
+            };
+          } else {
+            // Phase 2: the server-side admin scope gate — THE security boundary.
+            // Admin-scoped endpoints (/api/admin/*) are reachable only by platform
+            // admins, enforced here BEFORE any portal round-trip (model-independent).
+            // - verified non-admin caller → 403, never reaches the portal
+            // - token present but unverifiable → 403 (fail closed — a broken
+            //   verification must NOT degrade to the service account)
+            // - no token at all → legacy service-account fallback (opt-in, phase 3)
+            // _dash tools are intentionally NOT gated: the portal's requirePermission
+            // enforces org-admin rights per target org and returns its own 403.
+            if (gateOn && scope === 'admin') {
+              if (resolved.verifyFailed) {
+                result = { success: false, status: 403, error: `Tool '${id}' requires a platform admin; the caller token could not be verified.` };
+              } else if (resolved.token !== null && !resolved.caller?.isPlatformAdmin) {
+                result = { success: false, status: 403, error: `Tool '${id}' requires a platform admin. Caller is not authorized.` };
+              }
+            }
+
+            // Phase 3: fail closed on non-admin tools too — a token that cannot
+            // be verified must not ride the service account (or run unattributed).
+            if (!result && resolved.verifyFailed) {
+              result = { success: false, status: 401, error: 'Caller token could not be verified. Re-authenticate and retry.' };
+            }
+
+            if (!result) {
+              const pathParams: Record<string, string> = {};
+              const query: Record<string, unknown> = {};
+              const bodyFields: Record<string, unknown> = {};
+
+              for (const name of Object.keys(ep.pathParams)) {
+                if (input[name] !== undefined) pathParams[name] = input[name];
+              }
+              for (const name of Object.keys(ep.queryParams)) {
+                if (input[name] !== undefined) query[name] = input[name];
+              }
+              // everything else that isn't a path/query param / orgId is body data
+              const known = new Set([...Object.keys(ep.pathParams), ...Object.keys(ep.queryParams), 'orgId']);
+              for (const [k, v] of Object.entries(input)) {
+                if (!known.has(k) && v !== undefined) bodyFields[k] = v;
+              }
+
+              const hasBody = ep.bodySchema !== undefined;
+              const res = await client.request(ep.method, ep.path, {
+                pathParams,
+                query: query as any,
+                body: hasBody ? (input.body !== undefined ? input.body : bodyFields) : undefined,
+                orgId: input.orgId,
+                bearerToken: resolved.token ?? undefined,
+              });
+
+              if (!res.ok) {
+                result = {
+                  success: false,
+                  status: res.status,
+                  error: typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
+                };
+              } else {
+                result = { success: true, status: res.status, data: res.data };
+              }
+            }
           }
-          if (resolved.token !== null && !resolved.caller?.isPlatformAdmin) {
-            return { success: false, status: 403, error: `Tool '${id}' requires a platform admin. Caller is not authorized.` };
-          }
+        } catch (err) {
+          logToolCall({
+            userId: auditUserId,
+            toolId: id,
+            scope,
+            orgId: typeof input?.orgId === 'string' ? input.orgId : undefined,
+            status: 500,
+            latencyMs: Date.now() - startedAt,
+          });
+          throw err;
         }
 
-        const pathParams: Record<string, string> = {};
-        const query: Record<string, unknown> = {};
-        const bodyFields: Record<string, unknown> = {};
-
-        for (const name of Object.keys(ep.pathParams)) {
-          if (input[name] !== undefined) pathParams[name] = input[name];
-        }
-        for (const name of Object.keys(ep.queryParams)) {
-          if (input[name] !== undefined) query[name] = input[name];
-        }
-        // everything else that isn't a path/query param / orgId is body data
-        const known = new Set([...Object.keys(ep.pathParams), ...Object.keys(ep.queryParams), 'orgId']);
-        for (const [k, v] of Object.entries(input)) {
-          if (!known.has(k) && v !== undefined) bodyFields[k] = v;
-        }
-
-        const hasBody = ep.bodySchema !== undefined;
-        const res = await client.request(ep.method, ep.path, {
-          pathParams,
-          query: query as any,
-          body: hasBody ? (input.body !== undefined ? input.body : bodyFields) : undefined,
-          orgId: input.orgId,
-          bearerToken: resolved.token ?? undefined,
+        logToolCall({
+          userId: auditUserId,
+          toolId: id,
+          scope,
+          orgId: typeof input?.orgId === 'string' ? input.orgId : undefined,
+          status: typeof result?.status === 'number' ? result.status : 500,
+          latencyMs: Date.now() - startedAt,
         });
-
-        if (!res.ok) {
-          return {
-            success: false,
-            status: res.status,
-            error: typeof res.data === 'string' ? res.data : JSON.stringify(res.data),
-          };
-        }
-        return { success: true, status: res.status, data: res.data };
+        return result;
       },
     });
   }
@@ -384,5 +445,5 @@ export function generateTools(
 /** Convenience: load spec + generate all portal tools with the given (shared) client. */
 export function buildPortalTools(config: PortalMcpConfig, client: PortalClient): Record<string, any> {
   const spec = loadSpec();
-  return generateTools(spec, client, config.excludePathPrefixes, config.enforceScopeGate);
+  return generateTools(spec, client, config.excludePathPrefixes, config.enforceScopeGate, config.allowServiceFallback);
 }

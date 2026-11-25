@@ -129,10 +129,12 @@ export class PortalClient {
       return this.doRequest(method, path, opts);
     }
     // Legacy path: shared Platform super-admin session. Kept for existing
-    // non-agent MCP clients (Studio, scripts) during rollout; removed in phase 3.
-    if (process.env.MCP_ALLOW_SERVICE_FALLBACK === '0') {
+    // non-agent MCP clients (Studio, scripts) during rollout; phase 3 makes it
+    // opt-in — the service account is unreachable unless explicitly enabled.
+    if (process.env.MCP_ALLOW_SERVICE_FALLBACK !== '1') {
       throw new Error(
-        'No caller token provided and service-account fallback is disabled (MCP_ALLOW_SERVICE_FALLBACK=0).'
+        'No caller token provided and service-account fallback is disabled (MCP_ALLOW_SERVICE_FALLBACK defaults to 0). ' +
+          'Authenticate with a portal session token, or set MCP_ALLOW_SERVICE_FALLBACK=1 to restore the legacy behavior.'
       );
     }
     await this.ensureSession();

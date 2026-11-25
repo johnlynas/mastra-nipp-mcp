@@ -33,6 +33,7 @@ const fakeCaller = { userId: 'u1', orgId: 'o1', isPlatformAdmin: true };
 
 afterEach(() => {
   __setVerifyCallerForTests(async () => null);
+  delete process.env.MCP_ALLOW_SERVICE_FALLBACK; // phase 3: default = off
 });
 
 describe('generated tools forward the verified caller token (phase 1)', () => {
@@ -51,7 +52,18 @@ describe('generated tools forward the verified caller token (phase 1)', () => {
     );
   });
 
-  it('falls back (no token) when the context has no caller', async () => {
+  it('rejects (no token) by default — phase 3 removed the implicit fallback', async () => {
+    const request = vi.fn(async () => ({ status: 200, ok: true, data: {} }));
+    __setVerifyCallerForTests(async (t) => (t === 'tok-ok' ? fakeCaller : null));
+    const tools = generateTools(miniSpec, { request } as any, ['/api/auth']);
+
+    const out = await tools[TOOL_ID].execute({ page: 1 }, {});
+    expect(out).toMatchObject({ success: false, status: 401 });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('keeps the service-account fallback when MCP_ALLOW_SERVICE_FALLBACK=1', async () => {
+    process.env.MCP_ALLOW_SERVICE_FALLBACK = '1';
     const request = vi.fn(async () => ({ status: 200, ok: true, data: {} }));
     __setVerifyCallerForTests(async (t) => (t === 'tok-ok' ? fakeCaller : null));
     const tools = generateTools(miniSpec, { request } as any, ['/api/auth']);

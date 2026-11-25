@@ -59,6 +59,12 @@ describe('PortalClient per-request token', () => {
     expect(n).toBe(2); // sign-in + request
   });
 
+  it('rejects by default when no token (phase 3 — flag unset)', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const c = new PortalClient(cfg as any);
+    await expect(c.request('GET', '/api/admin/users')).rejects.toThrow(/no caller token/i);
+  });
+
   it('rejects when no token and fallback disabled', async () => {
     vi.stubGlobal('fetch', vi.fn());
     process.env.MCP_ALLOW_SERVICE_FALLBACK = '0';
