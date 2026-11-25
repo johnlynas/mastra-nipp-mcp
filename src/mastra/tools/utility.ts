@@ -4,10 +4,11 @@
  * Phase 3: audited like every other tool call — scope 'system', verified user
  * id (or 'legacy-service' / 'unverified'), never the token.
  */
+import { createHash } from 'node:crypto';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { PortalClient } from '../client.js';
-import { resolveCaller } from './caller.js';
+import { resolveCaller, extractTokenFromContext } from './caller.js';
 import { logToolCall } from '../audit.js';
 
 /** Shared audit wrapper for the diagnostic tools. */
@@ -71,6 +72,32 @@ export function sessionVerifyTool(client: PortalClient) {
           permissions: perms.ok ? perms.data : null,
         };
       });
+    },
+  });
+}
+
+/**
+ * Context-propagation canary (phase 3 task 4). Echoes back a SHA-256
+ * fingerprint of the raw token observed in this tool's execution context plus
+ * the verified caller identity — WITHOUT ever returning the token itself.
+ * Used by tests/integration/context-propagation.test.ts to prove that an
+ * `Authorization: Bearer *** header on the wire reaches `requestContext`
+ * inside tool execute (the plumbing the whole authz model depends on).
+ */
+export function contextCanaryTool() {
+  return createTool({
+    id: 'context_canary',
+    description:
+      'Diagnostic: reports a SHA-256 fingerprint of the request token observed in this tool\'s execution context and the verified caller. For integration tests only — not a portal operation.',
+    inputSchema: z.object({}),
+    execute: async (_input: any, context?: any) => {
+      const raw = extractTokenFromContext(context);
+      const resolved = await resolveCaller(context);
+      return {
+        tokenSha256: raw ? createHash('sha256').update(raw).digest('hex') : null,
+        verifiedUserId: resolved.caller?.userId ?? null,
+        isPlatformAdmin: resolved.caller?.isPlatformAdmin ?? false,
+      };
     },
   });
 }

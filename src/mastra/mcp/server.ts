@@ -9,7 +9,7 @@ import { loadConfig } from '../config.js';
 import type { PortalMcpConfig } from '../config.js';
 import { PortalClient } from '../client.js';
 import { buildPortalTools } from '../tools/generate.js';
-import { healthCheckTool, sessionVerifyTool } from '../tools/utility.js';
+import { healthCheckTool, sessionVerifyTool, contextCanaryTool } from '../tools/utility.js';
 import { filterToolsForCaller } from '../tools/filter.js';
 import { verifyCaller } from '../auth.js';
 
@@ -53,8 +53,9 @@ Authorization model (enforced by this server, independent of the model):
   own per-org permissions; unauthorized callers get the portal's 403.
 - Tenant tools (_tenant = /api/organizations/{orgId}) and single-scope tools run
   under the caller's session with their org context.
-- Calls without a caller token use the server's legacy service session (phase 2);
-  that path is being removed — prefer authenticated clients.
+- Calls without a caller token are rejected with 401 (the legacy service
+  session is disabled by default; operators can re-enable it per environment).
+  Authenticate the client with a portal session token.
 
 Conventions:
 - Tool ids are grouped by the portal's service domains: \`user_list_admin\` = GET /api/admin/users,
@@ -75,6 +76,7 @@ Conventions:
     ...portalTools,
     portal_health: healthCheckTool(client),
     portal_session_verify: sessionVerifyTool(client),
+    context_canary: contextCanaryTool(),
   },
 });
 
