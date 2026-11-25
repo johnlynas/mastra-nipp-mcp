@@ -279,6 +279,10 @@ function buildDescription(ep: EndpointDef): string {
     const first = ep.description.split('\n\n')[0].trim();
     if (first && first !== ep.summary) parts.push(first.slice(0, 500));
   }
+  // Phase 2: tell the model up front which tools are server-gated.
+  if (classifyTool(ep.path) === 'admin') {
+    parts.push('Requires Platform admin — the MCP server rejects non-admin callers with 403.');
+  }
   return parts.join(' — ');
 }
 

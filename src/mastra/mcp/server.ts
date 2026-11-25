@@ -41,8 +41,20 @@ export const portalMcpServer = new MCPServer({
   description:
     'Control the NIPP property-management portal (admin/Platform org) via its REST API: organizations, users, roles, permissions, teams, work orders, contractors, invoices, quotes, resources, units, jobs, scripts and more.',
   instructions: `
-This server exposes the NIPP portal's admin API. The server acts as a Platform-organization
-admin session; every call is forwarded to ${config.baseUrl} with that session.
+This server exposes the NIPP portal's REST API and executes every call under the
+CALLING user's own portal session (per-request bearer token), not a shared admin
+session. The portal's RBAC/RLS is the final authority on every call.
+
+Authorization model (enforced by this server, independent of the model):
+- Admin-scoped tools (_admin = /api/admin/*) require the caller to be a member of
+  the Platform organization. Non-admin callers get success:false with status 403
+  BEFORE any portal request — do not retry them as the same user.
+- Dashboard-admin tools (_dash = /api/dashboard/admin/*) are gated by the portal's
+  own per-org permissions; unauthorized callers get the portal's 403.
+- Tenant tools (_tenant = /api/organizations/{orgId}) and single-scope tools run
+  under the caller's session with their org context.
+- Calls without a caller token use the server's legacy service session (phase 2);
+  that path is being removed — prefer authenticated clients.
 
 Conventions:
 - Tool ids are grouped by the portal's service domains: \`user_list_admin\` = GET /api/admin/users,
@@ -53,10 +65,10 @@ Conventions:
 - Scope suffixes mark where an operation lives: _admin (/api/admin), _dash (/api/dashboard/admin),
   _tenant (/api/organizations/{orgId}). No suffix = single scope.
 - Most operations are scoped to an organization (tenant isolation). Pass \`orgId\` to target
-  a specific tenant; when omitted the Platform org is used by default.
+  a specific tenant; when omitted the caller's active organization is used by default.
 - List endpoints support pagination via \`page\` and \`pageSize\` where documented.
-- If a call returns success:false with status 401, the portal session expired — call
-  \`portal_session_verify\`; the server re-authenticates automatically on the next call.
+- If a call returns success:false with status 401, the portal session expired — the client
+  should re-authenticate; status 403 means the caller lacks the required role/permission.
 - Destructive operations (delete, ban, status changes) are real — confirm intent before use.
 `.trim(),
   tools: {
