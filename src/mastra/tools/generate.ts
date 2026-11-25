@@ -18,6 +18,7 @@ import { schemaToZod } from '../schema.js';
 import { PortalClient } from '../client.js';
 import type { PortalMcpConfig } from '../config.js';
 import { resolveCaller } from './caller.js';
+import { registerToolScope } from './filter.js';
 
 interface EndpointDef {
   method: string; // GET, POST, ...
@@ -299,6 +300,8 @@ export function generateTools(
   for (const ep of endpoints) {
     const id = ids.get(ep)!;
     if (tools[id]) throw new Error(`Duplicate tool id: ${id}`);
+    // Phase 2: record the scope for the per-caller tools/list filter.
+    registerToolScope(id, classifyTool(ep.path));
 
     const inputSchema = buildInputSchema(ep, spec);
 

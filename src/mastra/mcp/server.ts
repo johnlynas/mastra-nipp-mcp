@@ -10,6 +10,8 @@ import type { PortalMcpConfig } from '../config.js';
 import { PortalClient } from '../client.js';
 import { buildPortalTools } from '../tools/generate.js';
 import { healthCheckTool, sessionVerifyTool } from '../tools/utility.js';
+import { filterToolsForCaller } from '../tools/filter.js';
+import { verifyCaller } from '../auth.js';
 
 /**
  * Shared PortalClient instance, hoisted to globalThis.
@@ -63,3 +65,40 @@ Conventions:
     portal_session_verify: sessionVerifyTool(client),
   },
 });
+
+/**
+ * Phase 2 task 3: per-caller tools/list filtering.
+ *
+ * @mastra/mcp 2.9 has no public per-request tool-list hook (the FGA path in
+ * `authorizedToolEntries` only runs when a Mastra FGA provider is configured),
+ * so we wrap the server's own `authorizedToolEntries` — the single method both
+ * the protocol `tools/list` handler and `getToolListInfo` (Mastra REST/Studio)
+ * go through. The caller is resolved from the same requestContext key the
+ * generated tools use (`authInfo.token`, set by the setRequestAuth bridge):
+ * - no token / verification failed → unfiltered (legacy surface, phase 3 removes it)
+ * - verified non-admin → _admin tools dropped
+ * - platform admin → full list
+ */
+const serverAny = portalMcpServer as unknown as {
+  authorizedToolEntries: (rc?: { get: (k: string) => unknown }) => Promise<[string, unknown][]>;
+};
+const baseAuthorizedToolEntries = serverAny.authorizedToolEntries.bind(portalMcpServer);
+serverAny.authorizedToolEntries = async (requestContext) => {
+  const entries = await baseAuthorizedToolEntries(requestContext);
+  if (!requestContext) return entries;
+  const authInfo = requestContext.get('authInfo') as { token?: string } | undefined;
+  const explicit = requestContext.get('mastra__mcpToken');
+  const token =
+    (typeof authInfo?.token === 'string' && authInfo.token) ||
+    (typeof explicit === 'string' && explicit) ||
+    '';
+  if (!token) return entries; // legacy token-less request → full surface
+  const caller = await verifyCaller(token); // never throws (fail-closed internally)
+  if (!caller) return entries; // unverified → keep the full surface for listing;
+                               // the call-time scope gate stays authoritative
+  const visible = filterToolsForCaller(
+    Object.fromEntries(entries.map(([id, tool]) => [id, tool])) as Record<string, { id?: string }>,
+    caller,
+  );
+  return entries.filter(([id]) => id in visible);
+};
