@@ -148,6 +148,12 @@ export class PortalClient {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
       Accept: 'application/json',
+      // The portal's CSRF gate (lib/csrf.ts isSameOriginRequest) rejects
+      // state-changing requests in production without an Origin/Referer
+      // matching the request URL. Node fetch sends neither by default, so
+      // every POST/PATCH/PUT would 403 "cross-site request blocked".
+      Origin: this.config.baseUrl,
+      Referer: `${this.config.baseUrl}/`,
     };
     const orgId = opts.orgId ?? this.config.defaultOrgId;
     if (orgId) headers['x-org-id'] = orgId;

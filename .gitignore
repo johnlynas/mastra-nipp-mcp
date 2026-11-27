@@ -21,6 +21,9 @@ src/mastra/public/
 dist/
 build/
 
+# Generated Prisma client (regenerate with prisma generate)
+prisma/generated/
+
 # Logs & coverage
 *.log
 coverage/
